@@ -1,8 +1,6 @@
 package data
 
 import (
-	"time"
-
 	"github.com/jinzhu/gorm"
 	"github.com/lib/pq"
 )
@@ -51,5 +49,36 @@ type TruliaEntity struct {
 	Restaurant           int `gorm:"not null;default:0"`
 	Groceires            int `gorm:"not null;default:0"`
 	Nightlife            int `gorm:"not null;default:0"`
-	LastModifiedDate     time.Time
+}
+
+//Find populate current object
+func (t *TruliaEntity) Find() error {
+	if db := dbContext.Where(*t).First(&t); db.Error != nil {
+		return db.Error
+	}
+	return nil
+}
+
+//FindWithTx populate current object with transaction
+func (t *TruliaEntity) FindWithTx(tx *gorm.DB) error {
+	if db := tx.Where(*t).First(&t); db.Error != nil {
+		return db.Error
+	}
+	return nil
+}
+
+//Save save current object
+func (t *TruliaEntity) Save() error {
+	if db := dbContext.Save(t).Scan(&t); db.Error != nil {
+		return db.Error
+	}
+	return nil
+}
+
+//SaveWithTx save current object with transaction
+func (t *TruliaEntity) SaveWithTx(tx *gorm.DB) error {
+	if db := tx.Save(t).Scan(&t); db.Error != nil {
+		return db.Error
+	}
+	return nil
 }
