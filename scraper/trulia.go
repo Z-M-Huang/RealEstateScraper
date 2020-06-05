@@ -40,7 +40,7 @@ func (t *Trulia) Start() {
 	)
 
 	c := colly.NewCollector(
-		colly.UserAgent("Googlebot"),
+		colly.UserAgent("Real Estate Agent"),
 		colly.AllowURLRevisit(),
 	)
 	c.Limit(&colly.LimitRule{DomainGlob: "*", Parallelism: 10})
