@@ -1,0 +1,20 @@
+name: Docker CI
+
+on:
+  push:
+    branches: [ master ]
+
+jobs:
+  deploy:
+    name: deploy
+    runs-on: self-hosted
+    steps:      
+    - uses: actions/checkout@v2
+    - name: Deploy
+      env:
+        DB_DRIVER: ${{ secrets.DB_DRIVER }}
+        REDIS_ADDR: ${{ secrets.REDIS_ADDR }}
+        CONNECTION_STRING: ${{ secrets.CONNECTION_STRING }}
+      run: |
+        export DB_DRIVER REDIS_ADDR CONNECTION_STRING
+        docker-compose up -d
