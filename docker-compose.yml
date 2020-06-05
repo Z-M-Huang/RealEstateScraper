@@ -11,6 +11,8 @@ services:
       - "REDIS_ADDR=${REDIS_ADDR}"
       - "CONNECTION_STRING=${CONNECTION_STRING}"
       - "DB_DRIVER=${DB_DRIVER}"
+      - "TRULIA_PROXY=${TRULIA_PROXY}"
+      - "TRULIA_PROXY_THREAD=${TRULIA_PROXY_THREAD}"
       - "TZ=America/New_York"
     networks:
       - proxy
