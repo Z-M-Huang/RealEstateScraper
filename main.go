@@ -1,13 +1,12 @@
 package main
 
 import (
-	"github.com/Z-M-Huang/RealEstateScraper/data"
 	"github.com/Z-M-Huang/RealEstateScraper/scraper"
+	"github.com/Z-M-Huang/RealEstateScraper/utils"
 )
 
 func main() {
-	data.InitDB()
-
+	utils.InitRedis()
 	trulia := &scraper.Trulia{}
-	trulia.Scrape()
+	trulia.Start()
 }

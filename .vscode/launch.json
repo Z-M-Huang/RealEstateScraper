@@ -11,8 +11,7 @@
       "mode": "auto",
       "program": "${fileDirname}",
       "env": {
-        "CONNECTION_STRING": "./db.db",
-        "DB_DRIVER": "sqlite3",
+        "REDIS_ADDR": "192.168.1.68:6379"
       },
       "args": []
     }

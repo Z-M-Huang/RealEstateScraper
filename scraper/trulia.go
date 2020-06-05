@@ -1,59 +1,58 @@
 package scraper
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
-	"net/http"
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/Z-M-Huang/RealEstateScraper/data"
-	truliaData "github.com/Z-M-Huang/RealEstateScraper/scraper/data"
 	"github.com/Z-M-Huang/RealEstateScraper/utils"
 	"github.com/Z-M-Huang/sitemap-parser"
 	"github.com/gocolly/colly/v2"
-	"github.com/jinzhu/gorm"
-	"github.com/temoto/robotstxt"
 )
 
 //Trulia https://www.trulia.com/
 type Trulia struct {
-	urls []string
-
-	robots *robotstxt.RobotsData
+	elements   []sitemap.Element
+	gzSitemaps []string
 }
 
 var (
 	locker sync.Mutex
 )
 
-const (
-	robotsURL string = "https://www.trulia.com/robots.txt"
-	agentName string = "Real Estate Agent"
-)
-
-//Scrape scraping process
-func (t *Trulia) Scrape() {
-	err := t.getRobotsTxt()
-	if err != nil {
-		utils.Logger.Error(err.Error())
-		return
-	}
-
-	err = t.getURLsToScrap()
-	if err != nil {
-		utils.Logger.Error(err.Error())
-		return
-	}
-
-	c := colly.NewCollector()
+//Start process
+func (t *Trulia) Start() {
+	c := colly.NewCollector(
+		colly.UserAgent("Real Estate Agent"),
+	)
 	c.OnHTML("script", func(e *colly.HTMLElement) {
 		if e.Attr("id") == "__NEXT_DATA__" {
-			appData := &truliaData.TruliaWebData{}
-			err = json.Unmarshal([]byte(e.Text), &appData)
+			appData := &truliaRawObject{}
+			err := json.Unmarshal([]byte(e.Text), &appData)
 			if err != nil {
 				utils.Logger.Error(err.Error())
 				return
 			}
+
+			key := t.getRedisKey(appData.Props.HomeDetails.Location.StateCode, appData.Props.HomeDetails.Location.City, appData.Props.AsPath)
+			var b bytes.Buffer
+			gz := gzip.NewWriter(&b)
+			jsonBytes, err := json.Marshal(appData.Props)
+			if err != nil {
+				utils.Logger.Error(err.Error())
+				return
+			}
+			_, err = gz.Write(jsonBytes)
+			if err != nil {
+				utils.Logger.Error(err.Error())
+				return
+			}
+			gz.Close()
+			utils.RedisSet(key, b.Bytes(), 24*time.Hour)
 			link := t.getNextLink()
 			if link != "" {
 				c.Visit(link)
@@ -68,112 +67,96 @@ func (t *Trulia) Scrape() {
 	c.Visit(t.getNextLink())
 }
 
-func (t *Trulia) getURLsToScrap() error {
-
-	//public records
-	prIndex, err := sitemap.GetIndex("https://www.trulia.com/sitemaps/xml/public_records/index.xml")
-	if err != nil {
-		return err
-	}
-
-	prSitemaps, err := sitemap.GetSitemapGZ(prIndex.Elements[0].Loc)
-
-	// prSitemaps, err := prIndex.GetSitemaps()
-	// if err != nil {
-	// 	return err
-	// }
-
-	// //recent updates
-	// ruIndex, err := sitemap.GetIndex("https://www.trulia.com/sitemaps/xml/public_records/index.xml")
-	// if err != nil {
-	// 	return err
-	// }
-	// ruSitemaps, err := ruIndex.GetSitemaps()
-	// if err != nil {
-	// 	return err
-	// }
-
-	var allSavedTrulia []*data.TruliaEntity
-	err = data.DoTransaction(func(tx *gorm.DB) error {
-		if txDB := tx.Find(&allSavedTrulia); txDB.Error != nil {
-			return txDB.Error
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-
-	//for _, sm := range prSitemaps {
-	//for _, e := range sm.Elements {
-	for _, e := range prSitemaps.Elements {
-		found := false
-		for _, record := range allSavedTrulia {
-			if record.URL == e.Loc {
-				found = true
-				//check update time
-				updateTime, err := time.Parse(time.RFC3339, e.LastMod)
-				if err != nil {
-					return err
-				}
-				if record.UpdatedAt.Before(updateTime) && t.robots.TestAgent(e.Loc, agentName) {
-					t.urls = append(t.urls, e.Loc)
-				}
-				break
-			}
-		}
-		if !found && t.robots.TestAgent(e.Loc, agentName) {
-			t.urls = append(t.urls, e.Loc)
-		}
-	}
-	//}
-
-	// for _, sm := range ruSitemaps {
-	// 	for _, e := range sm.Elements {
-	// 		found := false
-	// 		for _, record := range allSavedTrulia {
-	// 			if record.URL == e.Loc {
-	// 				found = true
-	// 				//check update time
-	// 				updateTime, err := time.Parse(time.RFC3339, e.LastMod)
-	// 				if err != nil {
-	// 					return err
-	// 				}
-	// 				if record.UpdatedAt.Before(updateTime) && t.robots.TestAgent(e.Loc, agentName) {
-	// 					t.urls = append(t.urls, e.Loc)
-	// 				}
-	// 				break
-	// 			}
-	// 		}
-	// 		if !found && t.robots.TestAgent(e.Loc, agentName) {
-	// 			t.urls = append(t.urls, e.Loc)
-	// 		}
-	// 	}
-	// }
-	return nil
+func (Trulia) getRedisTimeUpdatedKey(url string) string {
+	return fmt.Sprintf("TRULIA_UPDATE_%s", url)
 }
 
-func (t *Trulia) getRobotsTxt() error {
-	resp, err := http.Get(robotsURL)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	robots, err := robotstxt.FromResponse(resp)
-	if err != nil {
-		return err
-	}
-	t.robots = robots
-	return nil
+func (Trulia) getRedisKey(state, city, url string) string {
+	state = strings.TrimSpace(strings.ToUpper(state))
+	city = strings.TrimSpace(strings.ToUpper(city))
+	return fmt.Sprintf("TRULIA_STATE_CITY_%s_%s_%s", state, city, url)
 }
 
 func (t *Trulia) getNextLink() string {
 	locker.Lock()
-	defer locker.Unlock()
-	link := ""
-	if len(t.urls) > 0 {
-		link = t.urls[0]
-		t.urls = t.urls[1:]
+
+	var e sitemap.Element
+
+	for {
+		if len(t.elements) > 0 {
+			e = t.elements[0]
+			t.elements = t.elements[1:]
+			utils.Logger.Sugar().Infof("There are %d urls left in current sitemap", len(t.elements))
+			break
+		}
+
+		if len(t.gzSitemaps) > 0 {
+			gzSM := t.gzSitemaps[0]
+			utils.Logger.Sugar().Info("Start loading urls from sitemap ", gzSM)
+			sm, err := sitemap.GetSitemapGZ(gzSM)
+			utils.Logger.Sugar().Infof("%d urls loaded from sitemap", len(sm.Elements))
+			if err != nil {
+				utils.Logger.Error(err.Error())
+
+				locker.Unlock()
+				return ""
+			}
+			t.gzSitemaps = t.gzSitemaps[1:]
+			for _, r := range sm.Elements {
+				t.elements = append(t.elements, r)
+			}
+			e = t.elements[0]
+			t.elements = t.elements[1:]
+			break
+		}
+		t.getIndexes()
 	}
-	return link
+
+	relativePath := strings.Replace(e.Loc, "https://www.trulia.com", "", 1)
+	key := t.getRedisTimeUpdatedKey(relativePath)
+	if utils.RedisExist(key) {
+		timeStr, err := utils.RedisGetString(key)
+		if err != nil {
+			utils.Logger.Error(err.Error())
+		} else {
+			redisTime, _ := time.Parse(time.RFC3339, timeStr)
+			mapTime, _ := time.Parse(time.RFC3339, e.LastMod)
+			if mapTime.After(redisTime) {
+				utils.RedisSet(key, e.LastMod, 24*time.Hour)
+			} else {
+				locker.Unlock()
+				return t.getNextLink()
+			}
+		}
+	} else {
+		utils.RedisSet(key, e.LastMod, 24*time.Hour)
+	}
+
+	locker.Unlock()
+	return e.Loc
+}
+
+func (t *Trulia) getIndexes() error {
+	//public records
+	utils.Logger.Info("Getting indexes")
+	prIndex, err := sitemap.GetIndex("https://www.trulia.com/sitemaps/xml/public_records/index.xml")
+	if err != nil {
+		utils.Logger.Error(err.Error())
+		return err
+	}
+	for _, r := range prIndex.Elements {
+		t.gzSitemaps = append(t.gzSitemaps, r.Loc)
+	}
+
+	//recent updates
+	ruIndex, err := sitemap.GetIndex("https://www.trulia.com/sitemaps/xml/public_records/index.xml")
+	if err != nil {
+		utils.Logger.Error(err.Error())
+		return err
+	}
+	utils.Logger.Info("Loading sitemaps...")
+	for _, r := range ruIndex.Elements {
+		t.gzSitemaps = append(t.gzSitemaps, r.Loc)
+	}
+	return nil
 }
