@@ -14,9 +14,3 @@ services:
       - "TRULIA_PROXY=${TRULIA_PROXY}"
       - "TRULIA_PROXY_THREAD=${TRULIA_PROXY_THREAD}"
       - "TZ=America/New_York"
-    networks:
-      - proxy
-        
-networks:
-  proxy:
-    external: true
