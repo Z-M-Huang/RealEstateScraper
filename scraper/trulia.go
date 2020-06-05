@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Z-M-Huang/RealEstateScraper/db"
 	"github.com/Z-M-Huang/RealEstateScraper/utils"
 	"github.com/Z-M-Huang/sitemap-parser"
 	"github.com/gocolly/colly/v2"
@@ -38,7 +39,7 @@ func (t *Trulia) Start() {
 				return
 			}
 
-			key := t.getRedisKey(appData.Props.HomeDetails.Location.StateCode, appData.Props.HomeDetails.Location.City, appData.Props.AsPath)
+			// key := t.getRedisKey(appData.Props.HomeDetails.Location.StateCode, appData.Props.HomeDetails.Location.City, appData.Props.AsPath)
 			var b bytes.Buffer
 			gz := gzip.NewWriter(&b)
 			jsonBytes, err := json.Marshal(appData.Props)
@@ -52,7 +53,17 @@ func (t *Trulia) Start() {
 				return
 			}
 			gz.Close()
-			utils.RedisSet(key, b.Bytes(), 24*time.Hour)
+			truliaEntity := &db.Trulia{
+				URL:   appData.Props.AsPath,
+				State: strings.ToUpper(appData.Props.HomeDetails.Location.StateCode),
+				City:  strings.ToUpper(appData.Props.HomeDetails.Location.City),
+				Data:  b.Bytes(),
+			}
+			err = truliaEntity.Save()
+			if err != nil {
+				utils.Logger.Error(err.Error())
+			}
+			// utils.RedisSet(key, b.Bytes(), 24*time.Hour)
 			link := t.getNextLink()
 			if link != "" {
 				c.Visit(link)
@@ -62,6 +73,14 @@ func (t *Trulia) Start() {
 
 	c.OnRequest(func(r *colly.Request) {
 		utils.Logger.Sugar().Infof("visiting %s", r.URL.String())
+	})
+
+	c.OnError(func(r *colly.Response, err error) {
+		fmt.Println("Request URL:", r.Request.URL, "failed with response:", r, "\nError:", err)
+		link := t.getNextLink()
+		if link != "" {
+			c.Visit(link)
+		}
 	})
 
 	c.Visit(t.getNextLink())
